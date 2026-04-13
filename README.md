@@ -84,6 +84,32 @@ The `hd-idle`-style behavior was consistent in runtime testing and kept the disk
 
 That was chosen over `inotify` to make sure reads and writes through already opened file descriptors are still seen as wake-up triggers. `inotify` is tied to inotify-style path and inode watch scope and is not a good fit for reliably catching that kind of already-open file activity.
 
+### Runtime example
+
+Example of running on a system with 6 disks in RAID6, dmcrypt luks and xfs mounted under `/mnt/spinningrust0`. The `daemon` executed without any switches or extra configuration.
+
+```
+hagane ~ # spinherd daemon
+2026/04/12 23:25:12.390434 watching herd mountpoints=/mnt/spinningrust0 sources=/dev/mapper/enc_spinningrust0 devices=sda,sdb,sdc,sdd,sde,sdf sleep_after=10m0s sleep_after_max=1h0m0s poll_interval=1m0s
+2026/04/12 23:43:12.450806 devices idle for 10m0s on mountpoints=/mnt/spinningrust0, arming fanotify
+2026/04/12 23:43:12.450922 spinning down devices=sda,sdb,sdc,sdd,sde,sdf
+2026/04/12 23:43:12.450939 stop /dev/sdf
+2026/04/12 23:43:12.451047 stop /dev/sdb
+2026/04/12 23:43:12.451214 stop /dev/sdd
+2026/04/12 23:43:12.451289 stop /dev/sde
+2026/04/12 23:43:12.451353 stop /dev/sdc
+2026/04/12 23:43:12.451424 stop /dev/sda
+2026/04/13 07:01:57.479259 sleep cycle lasted 7h18m42.759859459s on mountpoints=/mnt/spinningrust0, resetting sleep-after to 10m0s
+2026/04/13 07:01:57.479317 filesystem access detected while idle for mountpoints=/mnt/spinningrust0, waking disks
+2026/04/13 07:01:57.479333 start /dev/sdf
+2026/04/13 07:01:57.479333 start /dev/sdb
+2026/04/13 07:01:57.479362 start /dev/sdd
+2026/04/13 07:01:57.479381 start /dev/sde
+2026/04/13 07:01:57.479409 start /dev/sdc
+2026/04/13 07:01:57.479475 start /dev/sda
+```
+
+
 ## Debugging
 
 The `debug` subcommands exist to ad hoc test parts of `spinherd` at runtime.
