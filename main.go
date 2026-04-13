@@ -56,10 +56,13 @@ type DebugConfig struct {
 }
 
 type Command struct {
-	Name   string
-	Daemon DaemonConfig
-	Debug  DebugConfig
+	Name          string
+	Daemon        DaemonConfig
+	Debug         DebugConfig
+	SystemInstall SystemInstallConfig
 }
+
+type SystemInstallConfig struct{}
 
 func parseCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -79,9 +82,31 @@ func parseCommand(args []string) (Command, error) {
 			return Command{}, err
 		}
 		return Command{Name: "debug", Debug: cfg}, nil
+	case "system-install":
+		cfg, err := parseSystemInstallConfig(args[1:])
+		if err != nil {
+			return Command{}, err
+		}
+		return Command{Name: "system-install", SystemInstall: cfg}, nil
 	default:
 		return Command{}, usageError()
 	}
+}
+
+func parseSystemInstallConfig(args []string) (SystemInstallConfig, error) {
+	fs := flag.NewFlagSet("system-install", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage of system-install:")
+		fmt.Fprintln(os.Stderr, "  spinherd system-install")
+	}
+	if err := fs.Parse(args); err != nil {
+		return SystemInstallConfig{}, err
+	}
+	if fs.NArg() > 0 {
+		return SystemInstallConfig{}, fmt.Errorf("system-install does not take positional arguments")
+	}
+	return SystemInstallConfig{}, nil
 }
 
 func parseDaemonConfig(args []string) (DaemonConfig, error) {
@@ -215,6 +240,8 @@ func runCommand(ctx context.Context, paths Paths, logger *log.Logger, cmd Comman
 		return app.Run(ctx)
 	case "debug":
 		return runDebug(ctx, paths, logger, cmd.Debug)
+	case "system-install":
+		return runSystemInstall(ctx, logger, cmd.SystemInstall)
 	default:
 		return fmt.Errorf("unsupported command %q", cmd.Name)
 	}
@@ -229,6 +256,7 @@ func usageText() string {
 usage:
   spinherd daemon [--ignore-mnt /mnt/spinningrust0 ...] [--sleep-after 10m] [--sleep-after-max 1h] [--poll-interval 1m] [--verbose]
   spinherd daemon --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...] [--sleep-after 10m] [--sleep-after-max 1h] [--poll-interval 1m] [--verbose]
+  spinherd system-install
   spinherd debug daemon [--ignore-mnt /mnt/spinningrust0 ...]
   spinherd debug resolve --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug fanotify --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]

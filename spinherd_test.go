@@ -240,6 +240,22 @@ func TestParseCommandDaemon(t *testing.T) {
 	}
 }
 
+func TestParseCommandSystemInstall(t *testing.T) {
+	cmd, err := parseCommand([]string{"system-install"})
+	if err != nil {
+		t.Fatalf("parseCommand returned error: %v", err)
+	}
+	if cmd.Name != "system-install" {
+		t.Fatalf("unexpected command name: %q", cmd.Name)
+	}
+}
+
+func TestParseCommandSystemInstallRejectsPositionalArgs(t *testing.T) {
+	if _, err := parseCommand([]string{"system-install", "extra"}); err == nil {
+		t.Fatal("expected system-install to reject positional arguments")
+	}
+}
+
 func TestParseCommandDaemonAutoWithIgnoreMounts(t *testing.T) {
 	cmd, err := parseCommand([]string{"daemon", "--ignore-mnt", "/mnt/a", "--ignore-mnt", "/mnt/b"})
 	if err != nil {
@@ -323,6 +339,22 @@ func TestParseCommandDebugSpinupDevice(t *testing.T) {
 func TestParseCommandDebugSpinupRejectsShortDeviceName(t *testing.T) {
 	if _, err := parseCommand([]string{"debug", "spinup", "--device", "sda"}); err == nil {
 		t.Fatal("expected error when --device is not an explicit /dev path")
+	}
+}
+
+func TestSystemdServiceText(t *testing.T) {
+	got := systemdServiceText("/usr/local/sbin/spinherd")
+	wantParts := []string{
+		"Description=spinherd storage spindown daemon",
+		"After=local-fs.target",
+		"ExecStart=/usr/local/sbin/spinherd daemon",
+		"Restart=always",
+		"WantedBy=multi-user.target",
+	}
+	for _, part := range wantParts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("service text missing %q:\n%s", part, got)
+		}
 	}
 }
 

@@ -49,12 +49,7 @@ run: build
 	"$(HOST_BIN)"
 
 install: build
-	if [ "$$(id -u)" -eq 0 ]; then \
-		install -m 0755 "$(HOST_BIN)" "/usr/local/bin/$(APP)"; \
-	else \
-		mkdir -p "$$HOME/.local/bin"; \
-		ln -sfn "$(HOST_BIN)" "$$HOME/.local/bin/$(APP)"; \
-	fi
+	"$(HOST_BIN)" system-install
 
 clean:
 	chmod -R u+w "$(BUILD_DIR)" 2>/dev/null || true

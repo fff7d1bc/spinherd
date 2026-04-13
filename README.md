@@ -18,6 +18,16 @@ make static
 
 `make` writes `spinherd` to `build/bin/host/spinherd`. `make static` writes `spinherd-static` to `build/bin/host/spinherd-static`.
 
+## System Install
+
+```
+spinherd system-install
+```
+
+`system-install` copies the currently running binary to `/usr/local/sbin/spinherd`, writes `/etc/systemd/system/spinherd.service`, runs `systemctl daemon-reload`, enables the service for boot, and starts it.
+
+If `spinherd` is already running from `/usr/local/sbin/spinherd`, the copy step is skipped. If it is being run from anywhere else, it is copied over even if the target already exists, so the command also acts as an upgrade path.
+
 ## Quick Start
 
 First inspect what `spinherd` would manage:
@@ -153,6 +163,7 @@ spinherd debug spinup --device /dev/sda
 usage:
   spinherd daemon [--ignore-mnt /mnt/spinningrust0 ...] [--sleep-after 10m] [--sleep-after-max 1h] [--poll-interval 1m] [--verbose]
   spinherd daemon --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...] [--sleep-after 10m] [--sleep-after-max 1h] [--poll-interval 1m] [--verbose]
+  spinherd system-install
   spinherd debug daemon [--ignore-mnt /mnt/spinningrust0 ...]
   spinherd debug resolve --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug fanotify --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
