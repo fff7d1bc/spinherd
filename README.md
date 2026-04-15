@@ -30,25 +30,25 @@ If `spinherd` is already running from `/usr/local/sbin/spinherd`, the copy step 
 
 ## Quick Start
 
-First inspect what `spinherd` would manage:
+First inspect what `spinherd` would manage.
 
 ```
 spinherd debug daemon
 ```
 
-If needed, exclude mountpoints from auto mode:
+If needed, exclude mountpoints from default daemon mode.
 
 ```
 spinherd debug daemon --ignore-mnt /mnt/archive --ignore-mnt /mnt/backup
 ```
 
-Then run the daemon in an interactive shell with verbose logging before deploying it system-wide:
+Then run the daemon in an interactive shell with verbose logging before deploying it system-wide.
 
 ```
 spinherd daemon --verbose
 ```
 
-Or limit it to specific mountpoints:
+Or limit it to specific mountpoints.
 
 ```
 spinherd daemon --mnt /mnt/storage0 --verbose
@@ -84,9 +84,17 @@ If that is happening on your system, consider disabling those features outside `
 
 The current spin-up and spin-down transport is intentionally based on the behavior used by `hd-idle`.
 
-In practice this means `spinherd` sends SCSI `START STOP UNIT` through `SG_IO` in the style that proved reliable on my hardware. An alternative implementation was tested that matched the behavior used in the `sg_start` tool from `sg3_utils` much more closely, and `sg_start --stop` itself showed that same behavior there. In that setup, disks would bounce back up immediately after stop and the result was not reliable.
+In practice this means `spinherd` sends SCSI `START STOP UNIT` through `SG_IO` in the style that proved reliable on my hardware.
 
-The `hd-idle`-style behavior was consistent in runtime testing and kept the disks asleep as expected, so that is the implementation `spinherd` uses now.
+An alternative implementation was tested that matched the behavior used in the `sg_start` tool from `sg3_utils` much more closely. On my system, that caused disks to bounce back up immediately after stop. `sg_start --stop` itself showed the same behavior.
+
+That lines up with what `sg_start(8)` already documents. When `--stop` is sent through a normal block device such as `/dev/sdX`, the Linux block layer may notice the disk spinning down and decide to spin it back up again. The `sg_start` documentation recommends using `/dev/sg*` or `/dev/bsg/*` to avoid that class of issue.
+
+The useful detail here is that this was not just about the SCSI command itself. The command was essentially the same, but the transport details around it were different. The `sg_start`-style variant used a more aggressive `/dev/sdX` access pattern, while the `hd-idle`-style variant uses a simpler one. On my hardware, the simpler `hd-idle`-style path works reliably even through `/dev/sdX`, while the `sg_start`-style one does not.
+
+Linux does support `SG_IO` through normal block devices such as `/dev/sdX`, so this is not some accidental or unsupported trick. The practical takeaway is that the issue seems to be the `sg_start`-style access pattern on `/dev/sdX`, not merely the fact that `/dev/sdX` is used at all.
+
+Since the `hd-idle`-style behavior was consistent in runtime testing and kept the disks asleep as expected, I decided to keep that approach and not add `/dev/sg*` mapping complexity to `spinherd`.
 
 ### Monitoring For Changes
 
@@ -124,27 +132,27 @@ hagane ~ # spinherd daemon
 
 The `debug` subcommands exist to ad hoc test parts of `spinherd` at runtime.
 
-Inspect what default daemon mode would do:
+Inspect what default daemon mode would do.
 
 ```
 spinherd debug daemon
 spinherd debug daemon --ignore-mnt /mnt/archive
 ```
 
-Inspect what specific mountpoints resolve to:
+Inspect what specific mountpoints resolve to.
 
 ```
 spinherd debug resolve --mnt /mnt/storage0
 spinherd debug resolve --mnt /mnt/archive --mnt /mnt/media
 ```
 
-Watch runtime filesystem activity that would wake a sleeping herd:
+Watch runtime filesystem activity that would wake a sleeping herd.
 
 ```
 spinherd debug fanotify --mnt /mnt/storage0
 ```
 
-Force spin-down or spin-up:
+Force spin-down or spin-up.
 
 ```
 spinherd debug spindown --mnt /mnt/storage0
