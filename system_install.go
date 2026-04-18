@@ -48,7 +48,7 @@ func runSystemInstall(ctx context.Context, logger *log.Logger, _ SystemInstallCo
 	for _, args := range [][]string{
 		{"daemon-reload"},
 		{"enable", "spinherd.service"},
-		{"start", "spinherd.service"},
+		{"restart", "spinherd.service"},
 	} {
 		logger.Printf("running systemctl %s", joinArgs(args))
 		if err := runSystemctl(ctx, args...); err != nil {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +19,8 @@ type App struct {
 	paths  Paths
 	logger *log.Logger
 }
+
+const wakeStartStagger = 10 * time.Millisecond
 
 func (a *App) Run(ctx context.Context) error {
 	herds, _, err := planHerds(a.paths, a.cfg.Mountpoints, a.cfg.IgnoreMountpoints, a.cfg.Auto)
@@ -88,6 +89,7 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 
 	manager := DiskManager{
 		DeviceNames: herd.Devices,
+		Paths:       a.paths,
 		Logger:      a.logger,
 	}
 
@@ -124,11 +126,11 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 				currentSleepAfter = nextSleepAfter(currentSleepAfter, baseSleepAfter, maxSleepAfter, time.Since(sleepStartedAt), herd, a.logger)
 			}
 			a.logger.Printf("filesystem access detected while idle for mountpoints=%s, waking disks", strings.Join(herd.Mountpoints(), ","))
+			closeWatcherSet(watchers)
+			watchers = nil
 			if err := manager.StartAll(); err != nil {
 				return err
 			}
-			closeWatcherSet(watchers)
-			watchers = nil
 			prev, err = sampler.Read(herd.Devices)
 			if err != nil {
 				return err
@@ -215,11 +217,11 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 				}
 				currentSleepAfter = nextSleepAfter(currentSleepAfter, baseSleepAfter, maxSleepAfter, time.Since(sleepStartedAt), herd, a.logger)
 				a.logger.Printf("filesystem access arrived during spin-down for mountpoints=%s, waking disks immediately", strings.Join(herd.Mountpoints(), ","))
+				closeWatcherSet(watchers)
+				watchers = nil
 				if err := manager.StartAll(); err != nil {
 					return err
 				}
-				closeWatcherSet(watchers)
-				watchers = nil
 				prev, err = sampler.Read(herd.Devices)
 				if err != nil {
 					return err
@@ -485,31 +487,41 @@ func filesystemKey(path string) (uint64, error) {
 
 type DiskManager struct {
 	DeviceNames []string
+	Paths       Paths
 	Logger      *log.Logger
 }
 
 func (m DiskManager) StartAll() error {
-	return m.runParallel(true)
+	return m.runParallel(true, startStopModePowerConditionActive, wakeStartStagger)
 }
 
 func (m DiskManager) StopAll() error {
-	return m.runParallel(false)
+	return m.runParallel(false, startStopModeDefault, 0)
 }
 
-func (m DiskManager) runParallel(start bool) error {
+func (m DiskManager) runParallel(start bool, mode startStopMode, stagger time.Duration) error {
 	errs := make(chan error, len(m.DeviceNames))
-	for _, name := range m.DeviceNames {
+	for i, name := range m.DeviceNames {
+		i := i
 		name := name
 		go func() {
-			path := filepath.Join("/dev", name)
+			if stagger > 0 {
+				time.Sleep(time.Duration(i) * stagger)
+			}
+			path, err := resolveSCSIBlockGenericDevice(m.Paths, name)
+			if err != nil {
+				errs <- err
+				return
+			}
 			if m.Logger != nil {
 				if start {
-					m.Logger.Printf("start %s", path)
+					m.Logger.Printf("start %s (/dev/%s)", path, name)
 				} else {
-					m.Logger.Printf("stop %s", path)
+					m.Logger.Printf("stop %s (/dev/%s)", path, name)
 				}
 			}
-			errs <- sendStartStopUnit(path, start)
+			_, err = sendStartStopUnitDetailedMode(path, start, mode)
+			errs <- err
 		}()
 	}
 

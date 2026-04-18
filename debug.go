@@ -59,7 +59,7 @@ func runDebug(ctx context.Context, paths Paths, _ *log.Logger, cfg DebugConfig) 
 			}); err != nil {
 				return err
 			}
-			if err := debugStartStopAll(cfg.Action, herd); err != nil {
+			if err := debugStartStopAll(paths, cfg.Action, herd); err != nil {
 				_ = writeJSONLine(debugEvent{
 					Timestamp:   time.Now().Format(time.RFC3339Nano),
 					Action:      cfg.Action,
@@ -111,11 +111,12 @@ func runDebug(ctx context.Context, paths Paths, _ *log.Logger, cfg DebugConfig) 
 	}
 }
 
-func debugStartStopAll(action string, herd Herd) error {
-	start := action == "spinup"
+func debugStartStopAll(paths Paths, action string, herd Herd) error {
+	start, mode, transport := startStopBehavior(action)
 	errs := make(chan error, len(herd.Devices))
 	var wg sync.WaitGroup
 	var writeMu sync.Mutex
+	stagger := wakeStartStagger
 
 	emit := func(value any) error {
 		writeMu.Lock()
@@ -123,9 +124,13 @@ func debugStartStopAll(action string, herd Herd) error {
 		return writeJSONLine(value)
 	}
 
-	for _, device := range herd.Devices {
+	for i, device := range herd.Devices {
+		i := i
 		device := device
-		devicePath := filepath.Join("/dev", device)
+		devicePath, err := startStopDevicePath(paths, device, transport)
+		if err != nil {
+			return err
+		}
 
 		if err := emit(debugDiskEvent{
 			Timestamp:   time.Now().Format(time.RFC3339Nano),
@@ -135,9 +140,10 @@ func debugStartStopAll(action string, herd Herd) error {
 			Mountpoints: herd.Mountpoints(),
 			Device:      device,
 			DevicePath:  devicePath,
-			OpenFlags:   startStopOpenFlagsLabel,
+			Transport:   startStopTransportLabel(devicePath),
+			OpenFlags:   startStopOpenFlagsLabel(devicePath),
 			TimeoutMS:   0,
-			Command:     startStopCommand(start),
+			Command:     startStopCommandMode(start, mode),
 		}); err != nil {
 			return err
 		}
@@ -145,7 +151,10 @@ func debugStartStopAll(action string, herd Herd) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := sendStartStopUnitDetailed(devicePath, start)
+			if stagger > 0 {
+				time.Sleep(time.Duration(i) * stagger)
+			}
+			result, err := sendStartStopUnitDetailedMode(devicePath, start, mode)
 			if err != nil {
 				_ = emit(debugDiskEvent{
 					Timestamp:    time.Now().Format(time.RFC3339Nano),
@@ -155,6 +164,7 @@ func debugStartStopAll(action string, herd Herd) error {
 					Mountpoints:  herd.Mountpoints(),
 					Device:       device,
 					DevicePath:   devicePath,
+					Transport:    result.Transport,
 					OpenFlags:    result.OpenFlags,
 					TimeoutMS:    result.TimeoutMS,
 					Command:      result.Command[:],
@@ -179,6 +189,7 @@ func debugStartStopAll(action string, herd Herd) error {
 				Mountpoints:  herd.Mountpoints(),
 				Device:       device,
 				DevicePath:   devicePath,
+				Transport:    result.Transport,
 				OpenFlags:    result.OpenFlags,
 				TimeoutMS:    result.TimeoutMS,
 				Command:      result.Command[:],
@@ -212,11 +223,31 @@ func debugStartStopAll(action string, herd Herd) error {
 }
 
 func startStopCommand(start bool) []byte {
-	cmd := [6]byte{0x1b, 0x00, 0x00, 0x00, 0x00, 0x00}
-	if start {
-		cmd[4] = 0x01
-	}
+	cmd := startStopCommandWithMode(start, startStopModeDefault)
 	return cmd[:]
+}
+
+func startStopCommandMode(start bool, mode startStopMode) []byte {
+	cmd := startStopCommandWithMode(start, mode)
+	return cmd[:]
+}
+
+func startStopBehavior(action string) (bool, startStopMode, startStopTransport) {
+	switch action {
+	case "spinup":
+		return true, startStopModePowerConditionActive, startStopTransportSCSIBlockGeneric
+	default:
+		return false, startStopModeDefault, startStopTransportSCSIBlockGeneric
+	}
+}
+
+func startStopDevicePath(paths Paths, device string, transport startStopTransport) (string, error) {
+	switch transport {
+	case startStopTransportSCSIBlockGeneric:
+		return resolveSCSIBlockGenericDevice(paths, device)
+	default:
+		return filepath.Join("/dev", device), nil
+	}
 }
 
 func debugFanotify(ctx context.Context, mountpoints []string) error {
@@ -319,6 +350,7 @@ type debugDiskEvent struct {
 	Mountpoints  []string `json:"mountpoints,omitempty"`
 	Device       string   `json:"device"`
 	DevicePath   string   `json:"device_path"`
+	Transport    string   `json:"transport,omitempty"`
 	OpenFlags    string   `json:"open_flags,omitempty"`
 	TimeoutMS    uint32   `json:"timeout_ms,omitempty"`
 	Command      []byte   `json:"command,omitempty"`

@@ -5,22 +5,29 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"unsafe"
 )
 
 const (
-	sgIO        = 0x2285
-	sgDxferNone = -1
-	// This path intentionally mirrors hd-idle's START STOP UNIT transport:
-	// O_RDONLY, SG_DXFER_NONE, a 6-byte CDB, a 255-byte sense buffer, and no
-	// explicit timeout. In runtime testing on the target hardware, this kept
-	// disks spun down as expected, while the sg3_utils/sg_start-like variant
-	// (O_RDWR|O_NONBLOCK, 64-byte sense, 120s timeout) caused drives to bounce
-	// back up immediately after stop.
-	startStopOpenFlags      = os.O_RDONLY
-	startStopOpenFlagsLabel = "O_RDONLY"
-	startStopSenseLen       = 255
+	sgIO              = 0x2285
+	sgDxferNone       = -1
+	startStopSenseLen = 255
+)
+
+type startStopMode int
+
+const (
+	startStopModeDefault startStopMode = iota
+	startStopModePowerConditionActive
+)
+
+type startStopTransport int
+
+const (
+	startStopTransportBlock startStopTransport = iota
+	startStopTransportSCSIBlockGeneric
 )
 
 type sgIOHdr struct {
@@ -53,6 +60,7 @@ type startStopResult struct {
 	Start        bool
 	Command      [6]byte
 	OpenFlags    string
+	Transport    string
 	TimeoutMS    uint32
 	Status       uint8
 	MaskedStatus uint8
@@ -69,16 +77,18 @@ func sendStartStopUnit(devicePath string, start bool) error {
 }
 
 func sendStartStopUnitDetailed(devicePath string, start bool) (startStopResult, error) {
-	file, err := os.OpenFile(devicePath, startStopOpenFlags, 0)
+	return sendStartStopUnitDetailedMode(devicePath, start, startStopModeDefault)
+}
+
+func sendStartStopUnitDetailedMode(devicePath string, start bool, mode startStopMode) (startStopResult, error) {
+	openFlags, openFlagsLabel := startStopOpenSettings(devicePath)
+	file, err := os.OpenFile(devicePath, openFlags, 0)
 	if err != nil {
 		return startStopResult{}, fmt.Errorf("open %s: %w", devicePath, explainSGIOError(err))
 	}
 	defer file.Close()
 
-	cmd := [6]byte{0x1b, 0x00, 0x00, 0x00, 0x00, 0x00}
-	if start {
-		cmd[4] = 0x01
-	}
+	cmd := startStopCommandWithMode(start, mode)
 	sense := make([]byte, startStopSenseLen)
 	hdr := sgIOHdr{
 		InterfaceID:    int32('S'),
@@ -97,7 +107,8 @@ func sendStartStopUnitDetailed(devicePath string, start bool) (startStopResult, 
 		DevicePath:   devicePath,
 		Start:        start,
 		Command:      cmd,
-		OpenFlags:    startStopOpenFlagsLabel,
+		OpenFlags:    openFlagsLabel,
+		Transport:    startStopTransportLabel(devicePath),
 		TimeoutMS:    hdr.Timeout,
 		Status:       hdr.Status,
 		MaskedStatus: hdr.MaskedStatus,
@@ -121,6 +132,21 @@ func sendStartStopUnitDetailed(devicePath string, start bool) (startStopResult, 
 	return result, nil
 }
 
+func startStopCommandWithMode(start bool, mode startStopMode) [6]byte {
+	cmd := [6]byte{0x1b, 0x00, 0x00, 0x00, 0x00, 0x00}
+	switch mode {
+	case startStopModePowerConditionActive:
+		if start {
+			cmd[4] = 0x10
+		}
+	default:
+		if start {
+			cmd[4] = 0x01
+		}
+	}
+	return cmd
+}
+
 func explainSGIOError(err error) error {
 	switch err {
 	case syscall.EPERM:
@@ -130,4 +156,26 @@ func explainSGIOError(err error) error {
 	default:
 		return err
 	}
+}
+
+func startStopTransportLabel(devicePath string) string {
+	if strings.HasPrefix(devicePath, "/dev/sg") {
+		return "sg"
+	}
+	return "block"
+}
+
+func startStopOpenSettings(devicePath string) (int, string) {
+	if strings.HasPrefix(devicePath, "/dev/sg") {
+		return os.O_RDWR, "O_RDWR"
+	}
+	// The block-device path is kept only as an explicit debug fallback. The
+	// default daemon/debug transport resolves disks to /dev/sg* and uses that
+	// interface instead.
+	return os.O_RDONLY, "O_RDONLY"
+}
+
+func startStopOpenFlagsLabel(devicePath string) string {
+	_, label := startStopOpenSettings(devicePath)
+	return label
 }

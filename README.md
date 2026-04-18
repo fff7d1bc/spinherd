@@ -68,7 +68,7 @@ The daemon watches disk activity through `/proc/diskstats` and treats completed 
 
 If the herd wakes up sooner than the current sleep threshold, `spinherd` treats that sleep as too short to be worth it and increases the next sleep threshold by one base `--sleep-after` step, up to `--sleep-after-max`. If a herd stays asleep for at least its current threshold before waking again, the threshold resets back to the base `--sleep-after`.
 
-While a herd is already sleeping, `spinherd` does not keep trying to spin it down again on every timer interval. It waits for access, wakes the herd in parallel, and only then starts a new idle cycle.
+While a herd is already sleeping, `spinherd` does not keep trying to spin it down again on every timer interval. It waits for access, wakes the herd together with a very small per-disk stagger, and only then starts a new idle cycle.
 
 `--poll-interval` should usually be left at its default.
 
@@ -82,9 +82,9 @@ If that is happening on your system, consider disabling those features outside `
 
 ### Disk Start Stop Handling
 
-The current spin-up and spin-down transport is intentionally based on the behavior used by `hd-idle`.
+The current spin-up and spin-down transport is intentionally based on the behavior used by `hd-idle`, but the commands are now sent through `/dev/sg*` device nodes rather than normal block devices.
 
-In practice this means `spinherd` sends SCSI `START STOP UNIT` through `SG_IO` in the style that proved reliable on my hardware.
+In practice this means `spinherd` resolves each disk to its matching `/dev/sg*` node and sends SCSI `START STOP UNIT` through `SG_IO` there.
 
 An alternative implementation was tested that matched the behavior used in the `sg_start` tool from `sg3_utils` much more closely. On my system, that caused disks to bounce back up immediately after stop. `sg_start --stop` itself showed the same behavior.
 
@@ -92,15 +92,17 @@ That lines up with what `sg_start(8)` already documents. When `--stop` is sent t
 
 The useful detail here is that this was not just about the SCSI command itself. The command was essentially the same, but the transport details around it were different. The `sg_start`-style variant used a more aggressive `/dev/sdX` access pattern, while the `hd-idle`-style variant uses a simpler one. On my hardware, the simpler `hd-idle`-style path works reliably even through `/dev/sdX`, while the `sg_start`-style one does not.
 
-Linux does support `SG_IO` through normal block devices such as `/dev/sdX`, so this is not some accidental or unsupported trick. The practical takeaway is that the issue seems to be the `sg_start`-style access pattern on `/dev/sdX`, not merely the fact that `/dev/sdX` is used at all.
+Linux does support `SG_IO` through normal block devices such as `/dev/sdX`, so that was never some accidental or unsupported trick. But after further testing on my SAS setup, issuing the commands through the matching `/dev/sg*` nodes turned out to be the safer path, especially for wake-up after long sleep periods.
 
-Since the `hd-idle`-style behavior was consistent in runtime testing and kept the disks asleep as expected, I decided to keep that approach and not add `/dev/sg*` mapping complexity to `spinherd`.
+So the practical takeaway is that the issue seems to be the `sg_start`-style access pattern on `/dev/sdX`, not merely the fact that `/dev/sdX` exists. `spinherd` now resolves disks to `/dev/sg*` and uses that interface for its real start and stop commands.
 
 ### Monitoring For Changes
 
 `spinherd` uses the kernel `fanotify` interface to detect activity that should wake a sleeping herd.
 
 That was chosen over `inotify` to make sure reads and writes through already opened file descriptors are still seen as wake-up triggers. `inotify` is tied to inotify-style path and inode watch scope and is not a good fit for reliably catching that kind of already-open file activity.
+
+There is an important limitation. Mount-level metadata probes such as the `stat` and `statfs` pattern used early by tools like `xfs_fsr` do not currently show up in `spinherd`'s fanotify watcher. In practice that means one disk may begin waking through the normal kernel path before `spinherd` sees a later fanotify-visible event and wakes the rest of the herd.
 
 ### Runtime example
 
@@ -111,20 +113,20 @@ hagane ~ # spinherd daemon
 2026/04/12 23:25:12.390434 watching herd mountpoints=/mnt/spinningrust0 sources=/dev/mapper/enc_spinningrust0 devices=sda,sdb,sdc,sdd,sde,sdf sleep_after=10m0s sleep_after_max=1h0m0s poll_interval=1m0s
 2026/04/12 23:43:12.450806 devices idle for 10m0s on mountpoints=/mnt/spinningrust0, arming fanotify
 2026/04/12 23:43:12.450922 spinning down devices=sda,sdb,sdc,sdd,sde,sdf
-2026/04/12 23:43:12.450939 stop /dev/sdf
-2026/04/12 23:43:12.451047 stop /dev/sdb
-2026/04/12 23:43:12.451214 stop /dev/sdd
-2026/04/12 23:43:12.451289 stop /dev/sde
-2026/04/12 23:43:12.451353 stop /dev/sdc
-2026/04/12 23:43:12.451424 stop /dev/sda
+2026/04/12 23:43:12.450939 stop /dev/sg6 (/dev/sdf)
+2026/04/12 23:43:12.451047 stop /dev/sg2 (/dev/sdb)
+2026/04/12 23:43:12.451214 stop /dev/sg4 (/dev/sdd)
+2026/04/12 23:43:12.451289 stop /dev/sg5 (/dev/sde)
+2026/04/12 23:43:12.451353 stop /dev/sg3 (/dev/sdc)
+2026/04/12 23:43:12.451424 stop /dev/sg1 (/dev/sda)
 2026/04/13 07:01:57.479259 sleep cycle lasted 7h18m42.759859459s on mountpoints=/mnt/spinningrust0, resetting sleep-after to 10m0s
 2026/04/13 07:01:57.479317 filesystem access detected while idle for mountpoints=/mnt/spinningrust0, waking disks
-2026/04/13 07:01:57.479333 start /dev/sdf
-2026/04/13 07:01:57.479333 start /dev/sdb
-2026/04/13 07:01:57.479362 start /dev/sdd
-2026/04/13 07:01:57.479381 start /dev/sde
-2026/04/13 07:01:57.479409 start /dev/sdc
-2026/04/13 07:01:57.479475 start /dev/sda
+2026/04/13 07:01:57.479333 start /dev/sg6 (/dev/sdf)
+2026/04/13 07:01:57.479333 start /dev/sg2 (/dev/sdb)
+2026/04/13 07:01:57.479362 start /dev/sg4 (/dev/sdd)
+2026/04/13 07:01:57.479381 start /dev/sg5 (/dev/sde)
+2026/04/13 07:01:57.479409 start /dev/sg3 (/dev/sdc)
+2026/04/13 07:01:57.479475 start /dev/sg1 (/dev/sda)
 ```
 
 
@@ -163,7 +165,9 @@ spinherd debug spinup --device /dev/sda
 
 `debug resolve` and `debug daemon` print pretty JSON. `debug fanotify`, `debug spinup`, and `debug spindown` print JSON lines.
 
-`debug spinup` and `debug spindown` accept either `--mnt` or repeatable `--device`, but not both together. `--device` must be an explicit `/dev/...` block device path.
+The regular start and stop debug commands already use the `/dev/sg*` transport internally. When you pass `--device /dev/sdf`, `spinherd` resolves it to the matching `/dev/sg*` node before sending the command.
+
+`debug spinup` and `debug spindown` accept either `--mnt` or repeatable `--device`, but not both together. `--device` must be an explicit `/dev/...` block device path. `debug spinup` follows the same wake path as the daemon, including the `/dev/sg*` transport, the `ACTIVE` wake mode, and the small per-disk stagger. `debug spindown` also uses the `/dev/sg*` transport and the same command path, with a small stagger to keep runtime testing close to the wake-side timing behavior.
 
 ## Help
 

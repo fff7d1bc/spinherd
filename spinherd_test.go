@@ -214,6 +214,22 @@ func TestResolvePhysicalDevices(t *testing.T) {
 	}
 }
 
+func TestResolveSCSIBlockGenericDevice(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{
+		SysClassBlk: filepath.Join(root, "sys/class/block"),
+	}
+	mustMkdirAll(t, filepath.Join(paths.SysClassBlk, "sda/device/scsi_generic/sg1"))
+
+	got, err := resolveSCSIBlockGenericDevice(paths, "sda")
+	if err != nil {
+		t.Fatalf("resolveSCSIBlockGenericDevice returned error: %v", err)
+	}
+	if got != "/dev/sg1" {
+		t.Fatalf("unexpected sg path: %q", got)
+	}
+}
+
 func TestParseCommandDaemon(t *testing.T) {
 	cmd, err := parseCommand([]string{"daemon", "--mnt", "/mnt/data", "--mnt", "/mnt/archive", "--sleep-after", "15m", "--sleep-after-max", "1h", "--poll-interval", "3m"})
 	if err != nil {
@@ -354,6 +370,58 @@ func TestSystemdServiceText(t *testing.T) {
 	for _, part := range wantParts {
 		if !strings.Contains(got, part) {
 			t.Fatalf("service text missing %q:\n%s", part, got)
+		}
+	}
+}
+
+func TestStartStopCommandWithMode(t *testing.T) {
+	if got := startStopCommandWithMode(true, startStopModeDefault); !reflect.DeepEqual(got[:], []byte{0x1b, 0x00, 0x00, 0x00, 0x01, 0x00}) {
+		t.Fatalf("unexpected default start command: %v", got)
+	}
+	if got := startStopCommandWithMode(true, startStopModePowerConditionActive); !reflect.DeepEqual(got[:], []byte{0x1b, 0x00, 0x00, 0x00, 0x10, 0x00}) {
+		t.Fatalf("unexpected active power condition command: %v", got)
+	}
+	if got := startStopCommandWithMode(false, startStopModeDefault); !reflect.DeepEqual(got[:], []byte{0x1b, 0x00, 0x00, 0x00, 0x00, 0x00}) {
+		t.Fatalf("unexpected default stop command: %v", got)
+	}
+}
+
+func TestStartStopOpenSettings(t *testing.T) {
+	if flags, label := startStopOpenSettings("/dev/sg1"); flags != os.O_RDWR || label != "O_RDWR" {
+		t.Fatalf("unexpected sg open settings: flags=%d label=%q", flags, label)
+	}
+	if flags, label := startStopOpenSettings("/dev/sda"); flags != os.O_RDONLY || label != "O_RDONLY" {
+		t.Fatalf("unexpected block open settings: flags=%d label=%q", flags, label)
+	}
+}
+
+func TestStartStopBehaviorDefaultsToSG(t *testing.T) {
+	if start, _, transport := startStopBehavior("spinup"); !start || transport != startStopTransportSCSIBlockGeneric {
+		t.Fatalf("unexpected spinup behavior: start=%v transport=%v", start, transport)
+	}
+	if start, _, transport := startStopBehavior("spindown"); start || transport != startStopTransportSCSIBlockGeneric {
+		t.Fatalf("unexpected spindown behavior: start=%v transport=%v", start, transport)
+	}
+}
+
+func TestStartStopBehaviorUsesActiveWakeForSpinup(t *testing.T) {
+	start, mode, transport := startStopBehavior("spinup")
+	if !start {
+		t.Fatal("expected spinup behavior to start disks")
+	}
+	if mode != startStopModePowerConditionActive {
+		t.Fatalf("unexpected spinup mode: %v", mode)
+	}
+	if transport != startStopTransportSCSIBlockGeneric {
+		t.Fatalf("unexpected spinup transport: %v", transport)
+	}
+}
+
+func TestParseCommandDebugLegacySGActionsFail(t *testing.T) {
+	actions := []string{"spinup-sg", "spindown-sg", "spinup-immed", "spinup-active", "spinup-immed-sg", "spinup-active-sg"}
+	for _, action := range actions {
+		if _, err := parseCommand([]string{"debug", action, "--device", "/dev/sda"}); err == nil {
+			t.Fatalf("expected legacy action %q to fail", action)
 		}
 	}
 }
@@ -636,12 +704,12 @@ func TestConvertHerdsWithDevicePaths(t *testing.T) {
 
 func TestDiskManagerRunParallelNilLoggerDoesNotPanic(t *testing.T) {
 	manager := DiskManager{DeviceNames: []string{}, Logger: nil}
-	if err := manager.runParallel(true); err != nil {
+	if err := manager.runParallel(true, startStopModeDefault, 0); err != nil {
 		t.Fatalf("runParallel returned error: %v", err)
 	}
 
 	manager = DiskManager{DeviceNames: []string{}, Logger: log.New(os.Stderr, "", 0)}
-	if err := manager.runParallel(false); err != nil {
+	if err := manager.runParallel(false, startStopModeDefault, 0); err != nil {
 		t.Fatalf("runParallel with logger returned error: %v", err)
 	}
 }

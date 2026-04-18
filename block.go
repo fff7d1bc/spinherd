@@ -101,3 +101,27 @@ func partitionParent(devicePath string) (string, error) {
 	}
 	return parent, nil
 }
+
+func resolveSCSIBlockGenericDevice(paths Paths, name string) (string, error) {
+	devicePath := filepath.Join(paths.SysClassBlk, name)
+	if isPartition(devicePath) {
+		parent, err := partitionParent(devicePath)
+		if err != nil {
+			return "", err
+		}
+		name = parent
+		devicePath = filepath.Join(paths.SysClassBlk, name)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(devicePath, "device", "scsi_generic"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no scsi_generic mapping found for %s", name)
+		}
+		return "", fmt.Errorf("read scsi_generic mapping for %s: %w", name, err)
+	}
+	if len(entries) != 1 {
+		return "", fmt.Errorf("expected exactly one scsi_generic mapping for %s, got %d", name, len(entries))
+	}
+	return filepath.Join("/dev", entries[0].Name()), nil
+}
