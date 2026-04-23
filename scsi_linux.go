@@ -80,6 +80,10 @@ func sendStartStopUnitDetailed(devicePath string, start bool) (startStopResult, 
 	return sendStartStopUnitDetailedMode(devicePath, start, startStopModeDefault)
 }
 
+// sendStartStopUnitDetailedMode issues START STOP UNIT over SG_IO and returns
+// the transport details that are useful in debug output. The real daemon path
+// targets /dev/sg* nodes, while the block-device path is retained only as a
+// narrow fallback/debug aid.
 func sendStartStopUnitDetailedMode(devicePath string, start bool, mode startStopMode) (startStopResult, error) {
 	openFlags, openFlagsLabel := startStopOpenSettings(devicePath)
 	file, err := os.OpenFile(devicePath, openFlags, 0)
@@ -132,6 +136,9 @@ func sendStartStopUnitDetailedMode(devicePath string, start bool, mode startStop
 	return result, nil
 }
 
+// startStopCommandWithMode keeps the command shaping in one place so daemon and
+// debug paths use the same CDBs. The settled wake path uses the ACTIVE power
+// condition rather than the plain start bit.
 func startStopCommandWithMode(start bool, mode startStopMode) [6]byte {
 	cmd := [6]byte{0x1b, 0x00, 0x00, 0x00, 0x00, 0x00}
 	switch mode {

@@ -80,6 +80,10 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+// runHerd drives one independent herd through active, arming, and sleeping
+// states. The fanotify watcher is armed only once diskstats say the herd has
+// been idle long enough, then diskstats are sampled one more time to avoid
+// sleeping through a race where I/O resumed during watcher setup.
 func (a *App) runHerd(ctx context.Context, herd Herd) error {
 	sampler := DiskstatsSampler{Path: a.paths.Diskstats}
 	prev, err := sampler.Read(herd.Devices)
@@ -126,6 +130,8 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 				currentSleepAfter = nextSleepAfter(currentSleepAfter, baseSleepAfter, maxSleepAfter, time.Since(sleepStartedAt), herd, a.logger)
 			}
 			a.logger.Printf("filesystem access detected while idle for mountpoints=%s, waking disks", strings.Join(herd.Mountpoints(), ","))
+			// Tear the watcher down before issuing wake commands so daemon wake is
+			// as close as possible to the standalone debug spinup path.
 			closeWatcherSet(watchers)
 			watchers = nil
 			if err := manager.StartAll(); err != nil {
@@ -187,6 +193,8 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 			}
 			state = stateArming
 
+			// Fanotify observes access after it begins, so diskstats are re-read here
+			// to catch activity that resumed while the watcher was being armed.
 			current, err = sampler.Read(herd.Devices)
 			if err != nil {
 				return err
@@ -241,6 +249,9 @@ func (a *App) runHerd(ctx context.Context, herd Herd) error {
 	}
 }
 
+// nextSleepAfter implements the adaptive "too soon" backoff. A herd that wakes
+// before its current sleep threshold has effectively slept for too little to be
+// worth it, so the next threshold is increased by one base step up to max.
 func nextSleepAfter(current, base, max, sleptFor time.Duration, herd Herd, logger *log.Logger) time.Duration {
 	if max <= base {
 		return base
@@ -499,6 +510,9 @@ func (m DiskManager) StopAll() error {
 	return m.runParallel(false, startStopModeDefault, 0)
 }
 
+// runParallel sends the same start/stop command to every disk in the herd. Wake
+// uses a small stagger to avoid dropping a whole herd worth of START STOP UNIT
+// commands on the HBA at the exact same instant.
 func (m DiskManager) runParallel(start bool, mode startStopMode, stagger time.Duration) error {
 	errs := make(chan error, len(m.DeviceNames))
 	for i, name := range m.DeviceNames {

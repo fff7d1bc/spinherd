@@ -111,6 +111,9 @@ func runDebug(ctx context.Context, paths Paths, _ *log.Logger, cfg DebugConfig) 
 	}
 }
 
+// debugStartStopAll deliberately mirrors the daemon's settled transport and
+// timing so runtime experiments are testing the same behavior rather than a
+// special-case debug-only path.
 func debugStartStopAll(paths Paths, action string, herd Herd) error {
 	start, mode, transport := startStopBehavior(action)
 	errs := make(chan error, len(herd.Devices))
@@ -241,6 +244,8 @@ func startStopBehavior(action string) (bool, startStopMode, startStopTransport) 
 	}
 }
 
+// startStopDevicePath keeps debug input user-friendly. Callers can still think
+// in terms of /dev/sdX, while the real command path is resolved to /dev/sg*.
 func startStopDevicePath(paths Paths, device string, transport startStopTransport) (string, error) {
 	switch transport {
 	case startStopTransportSCSIBlockGeneric:

@@ -102,6 +102,9 @@ func partitionParent(devicePath string) (string, error) {
 	return parent, nil
 }
 
+// resolveSCSIBlockGenericDevice maps a block disk such as sda to its matching
+// /dev/sg* node through sysfs. The daemon uses sg nodes for START STOP UNIT to
+// avoid the less predictable block-device path on the tested SAS setup.
 func resolveSCSIBlockGenericDevice(paths Paths, name string) (string, error) {
 	devicePath := filepath.Join(paths.SysClassBlk, name)
 	if isPartition(devicePath) {

@@ -92,6 +92,10 @@ type FanotifyWatcher struct {
 	closeOnce  sync.Once
 }
 
+// NewFanotifyWatcher uses the FID/name reporting mode so directory entry events
+// such as create, delete, and rename are visible. This watches the filesystem,
+// not only one path subtree, which is acceptable here because any access to the
+// same underlying storage should wake the herd.
 func NewFanotifyWatcher(mountpoint string) (*FanotifyWatcher, error) {
 	fd, err := fanotifyInit(
 		fanCloexec|fanClassNotif|fanReportFID|fanReportDirFID|fanReportName,
@@ -147,6 +151,9 @@ func (w *FanotifyWatcher) Close() error {
 	return err
 }
 
+// readLoop decodes raw fanotify records and forwards only non-self events. The
+// self-PID filter avoids the watcher observing its own helper activity and
+// turning that into a false wake signal.
 func (w *FanotifyWatcher) readLoop() {
 	buf := make([]byte, 65536)
 	for {
@@ -190,6 +197,10 @@ func (w *FanotifyWatcher) readLoop() {
 	}
 }
 
+// buildEvent extracts only the lightweight data we keep for wake/debug
+// decisions. Paths are intentionally not reconstructed here because that adds
+// extra filesystem work and was observed to create confusing self-generated
+// activity.
 func (w *FanotifyWatcher) buildEvent(meta *fanotifyEventMetadata, eventBytes []byte) FanotifyEvent {
 	event := FanotifyEvent{
 		Mask:        meta.Mask,
@@ -224,6 +235,9 @@ type parsedFanotifyInfo struct {
 	name     string
 }
 
+// parseFanotifyInfoRecords walks the variable-length info records that follow a
+// fanotify metadata header and returns the file-handle/name records we care
+// about for debug output.
 func parseFanotifyInfoRecords(eventBytes []byte) []parsedFanotifyInfo {
 	metaLen := int(unsafe.Sizeof(fanotifyEventMetadata{}))
 	if len(eventBytes) < metaLen {
