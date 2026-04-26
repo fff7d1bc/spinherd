@@ -10,6 +10,19 @@ import (
 	"strings"
 )
 
+type DiskInfo struct {
+	Device      string `json:"device"`
+	DevicePath  string `json:"device_path"`
+	SGDevice    string `json:"sg_device,omitempty"`
+	SCSIAddress string `json:"scsi_address,omitempty"`
+	Vendor      string `json:"vendor,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	WWID        string `json:"wwid,omitempty"`
+	Serial      string `json:"serial,omitempty"`
+	SASAddress  string `json:"sas_address,omitempty"`
+}
+
 func resolvePhysicalDevices(paths Paths, majorMinor, source string) ([]string, error) {
 	name, err := resolveTopBlockDevice(paths, majorMinor, source)
 	if err != nil {
@@ -127,4 +140,67 @@ func resolveSCSIBlockGenericDevice(paths Paths, name string) (string, error) {
 		return "", fmt.Errorf("expected exactly one scsi_generic mapping for %s, got %d", name, len(entries))
 	}
 	return filepath.Join("/dev", entries[0].Name()), nil
+}
+
+func resolveDiskInfo(paths Paths, name string) DiskInfo {
+	info := DiskInfo{
+		Device:     name,
+		DevicePath: filepath.Join("/dev", name),
+	}
+
+	devicePath := filepath.Join(paths.SysClassBlk, name)
+	if isPartition(devicePath) {
+		if parent, err := partitionParent(devicePath); err == nil {
+			name = parent
+			devicePath = filepath.Join(paths.SysClassBlk, name)
+			info.Device = name
+			info.DevicePath = filepath.Join("/dev", name)
+		}
+	}
+
+	if sg, err := resolveSCSIBlockGenericDevice(paths, name); err == nil {
+		info.SGDevice = sg
+	}
+	if resolved, err := filepath.EvalSymlinks(filepath.Join(devicePath, "device")); err == nil {
+		info.SCSIAddress = filepath.Base(resolved)
+	}
+
+	info.Vendor = readSysfsString(filepath.Join(devicePath, "device", "vendor"))
+	info.Model = readSysfsString(filepath.Join(devicePath, "device", "model"))
+	info.Revision = readSysfsString(filepath.Join(devicePath, "device", "rev"))
+	info.WWID = readSysfsString(filepath.Join(devicePath, "device", "wwid"))
+	info.SASAddress = readSysfsString(filepath.Join(devicePath, "device", "sas_address"))
+	info.Serial = readSCSIVPDPage80(filepath.Join(devicePath, "device", "vpd_pg80"))
+	return info
+}
+
+func resolveDiskInfos(paths Paths, names []string) []DiskInfo {
+	infos := make([]DiskInfo, 0, len(names))
+	for _, name := range names {
+		infos = append(infos, resolveDiskInfo(paths, name))
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].Device < infos[j].Device
+	})
+	return infos
+}
+
+func readSysfsString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func readSCSIVPDPage80(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) < 4 {
+		return ""
+	}
+	length := int(data[3])
+	if len(data) < 4+length {
+		length = len(data) - 4
+	}
+	return strings.TrimSpace(string(data[4 : 4+length]))
 }

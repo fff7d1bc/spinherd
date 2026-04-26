@@ -160,7 +160,7 @@ func parseDebugConfig(args []string) (DebugConfig, error) {
 
 	action := args[0]
 	switch action {
-	case "fanotify", "resolve", "daemon", "spinup", "spindown":
+	case "fanotify", "resolve", "disks-info", "daemon", "spinup", "spindown":
 	default:
 		return DebugConfig{}, fmt.Errorf("unknown debug action %q\n%s", action, usageText())
 	}
@@ -174,6 +174,9 @@ func parseDebugConfig(args []string) (DebugConfig, error) {
 			fmt.Fprintln(os.Stderr, "  spinherd debug daemon [--ignore-mnt /mnt/storage0 ...]")
 		case "resolve":
 			fmt.Fprintln(os.Stderr, "  spinherd debug resolve --mnt /mnt/storage0 [--mnt /mnt/storage1 ...]")
+		case "disks-info":
+			fmt.Fprintln(os.Stderr, "  spinherd debug disks-info")
+			fmt.Fprintln(os.Stderr, "  spinherd debug disks-info --mnt /mnt/storage0 [--mnt /mnt/storage1 ...]")
 		case "fanotify":
 			fmt.Fprintln(os.Stderr, "  spinherd debug fanotify --mnt /mnt/storage0 [--mnt /mnt/storage1 ...]")
 		case "spindown":
@@ -220,7 +223,7 @@ func parseDebugConfig(args []string) (DebugConfig, error) {
 	} else if len(cfg.Devices) > 0 {
 		return DebugConfig{}, fmt.Errorf("--device is only supported for debug spinup and debug spindown")
 	}
-	if cfg.Action != "daemon" && !isStartStopDebugAction(cfg.Action) && len(cfg.Mountpoints) == 0 {
+	if cfg.Action != "daemon" && cfg.Action != "disks-info" && !isStartStopDebugAction(cfg.Action) && len(cfg.Mountpoints) == 0 {
 		return DebugConfig{}, fmt.Errorf("missing required --mnt")
 	}
 	if cfg.Action == "daemon" && len(cfg.Mountpoints) > 0 {
@@ -259,6 +262,7 @@ usage:
   spinherd system-install
   spinherd debug daemon [--ignore-mnt /mnt/spinningrust0 ...]
   spinherd debug resolve --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
+  spinherd debug disks-info [--mnt /mnt/spinningrust0 ...]
   spinherd debug fanotify --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug spindown --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug spindown --device /dev/sda [--device /dev/sdb ...]

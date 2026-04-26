@@ -527,11 +527,12 @@ func (m DiskManager) runParallel(start bool, mode startStopMode, stagger time.Du
 				errs <- err
 				return
 			}
+			info := resolveDiskInfo(m.Paths, name)
 			if m.Logger != nil {
 				if start {
-					m.Logger.Printf("start %s (/dev/%s)", path, name)
+					m.Logger.Printf("start %s", formatDiskInfoForLog(info))
 				} else {
-					m.Logger.Printf("stop %s (/dev/%s)", path, name)
+					m.Logger.Printf("stop %s", formatDiskInfoForLog(info))
 				}
 			}
 			_, err = sendStartStopUnitDetailedMode(path, start, mode)
@@ -549,4 +550,25 @@ func (m DiskManager) runParallel(start bool, mode startStopMode, stagger time.Du
 		return nil
 	}
 	return errors.Join(joined...)
+}
+
+func formatDiskInfoForLog(info DiskInfo) string {
+	primary := info.SGDevice
+	if primary == "" {
+		primary = info.DevicePath
+	}
+	parts := []string{primary, "(" + info.DevicePath + ")"}
+	if info.Serial != "" {
+		parts = append(parts, "serial="+info.Serial)
+	}
+	if info.WWID != "" {
+		parts = append(parts, "wwid="+info.WWID)
+	}
+	if info.SCSIAddress != "" {
+		parts = append(parts, "scsi="+info.SCSIAddress)
+	}
+	if info.SASAddress != "" {
+		parts = append(parts, "sas="+info.SASAddress)
+	}
+	return strings.Join(parts, " ")
 }

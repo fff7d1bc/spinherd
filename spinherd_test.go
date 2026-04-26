@@ -230,6 +230,37 @@ func TestResolveSCSIBlockGenericDevice(t *testing.T) {
 	}
 }
 
+func TestResolveDiskInfo(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{
+		SysClassBlk: filepath.Join(root, "sys/class/block"),
+	}
+	deviceDir := filepath.Join(root, "devices/pci0/7:0:1:0")
+	mustMkdirAll(t, filepath.Join(deviceDir, "scsi_generic", "sg1"))
+	mustMkdirAll(t, filepath.Join(paths.SysClassBlk, "sda"))
+	mustSymlink(t, deviceDir, filepath.Join(paths.SysClassBlk, "sda", "device"))
+	mustWriteFile(t, filepath.Join(deviceDir, "vendor"), []byte("ATA     \n"))
+	mustWriteFile(t, filepath.Join(deviceDir, "model"), []byte("ST8000\n"))
+	mustWriteFile(t, filepath.Join(deviceDir, "rev"), []byte("EN02\n"))
+	mustWriteFile(t, filepath.Join(deviceDir, "wwid"), []byte("naa.1234\n"))
+	mustWriteFile(t, filepath.Join(deviceDir, "sas_address"), []byte("0x5000\n"))
+	mustWriteFile(t, filepath.Join(deviceDir, "vpd_pg80"), []byte{0x00, 0x80, 0x00, 0x06, 'S', 'E', 'R', '1', '2', '3'})
+
+	got := resolveDiskInfo(paths, "sda")
+	if got.Device != "sda" || got.DevicePath != "/dev/sda" || got.SGDevice != "/dev/sg1" {
+		t.Fatalf("unexpected device paths: %+v", got)
+	}
+	if got.SCSIAddress != "7:0:1:0" {
+		t.Fatalf("unexpected scsi address: %q", got.SCSIAddress)
+	}
+	if got.Vendor != "ATA" || got.Model != "ST8000" || got.Revision != "EN02" {
+		t.Fatalf("unexpected identity strings: %+v", got)
+	}
+	if got.WWID != "naa.1234" || got.SASAddress != "0x5000" || got.Serial != "SER123" {
+		t.Fatalf("unexpected persistent identity fields: %+v", got)
+	}
+}
+
 func TestParseCommandDaemon(t *testing.T) {
 	cmd, err := parseCommand([]string{"daemon", "--mnt", "/mnt/data", "--mnt", "/mnt/archive", "--sleep-after", "15m", "--sleep-after-max", "1h", "--poll-interval", "3m"})
 	if err != nil {
@@ -336,6 +367,24 @@ func TestParseCommandDebugResolve(t *testing.T) {
 	}
 }
 
+func TestParseCommandDebugDisksInfo(t *testing.T) {
+	cmd, err := parseCommand([]string{"debug", "disks-info"})
+	if err != nil {
+		t.Fatalf("parseCommand returned error: %v", err)
+	}
+	if cmd.Name != "debug" || cmd.Debug.Action != "disks-info" {
+		t.Fatalf("unexpected command: %+v", cmd)
+	}
+
+	cmd, err = parseCommand([]string{"debug", "disks-info", "--mnt", "/mnt/data"})
+	if err != nil {
+		t.Fatalf("parseCommand with --mnt returned error: %v", err)
+	}
+	if !reflect.DeepEqual(cmd.Debug.Mountpoints, []string{"/mnt/data"}) {
+		t.Fatalf("unexpected mountpoints: %v", cmd.Debug.Mountpoints)
+	}
+}
+
 func TestParseCommandDebugSpinupDevice(t *testing.T) {
 	cmd, err := parseCommand([]string{"debug", "spinup", "--device", "/dev/sda", "--device", "/dev/sdb"})
 	if err != nil {
@@ -414,6 +463,22 @@ func TestStartStopBehaviorUsesActiveWakeForSpinup(t *testing.T) {
 	}
 	if transport != startStopTransportSCSIBlockGeneric {
 		t.Fatalf("unexpected spinup transport: %v", transport)
+	}
+}
+
+func TestFormatDiskInfoForLog(t *testing.T) {
+	got := formatDiskInfoForLog(DiskInfo{
+		Device:      "sda",
+		DevicePath:  "/dev/sda",
+		SGDevice:    "/dev/sg1",
+		SCSIAddress: "7:0:1:0",
+		WWID:        "naa.1234",
+		Serial:      "SER123",
+		SASAddress:  "0x5000",
+	})
+	want := "/dev/sg1 (/dev/sda) serial=SER123 wwid=naa.1234 scsi=7:0:1:0 sas=0x5000"
+	if got != want {
+		t.Fatalf("unexpected log info: got %q want %q", got, want)
 	}
 }
 

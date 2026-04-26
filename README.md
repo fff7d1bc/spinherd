@@ -148,6 +148,13 @@ spinherd debug resolve --mnt /mnt/storage0
 spinherd debug resolve --mnt /mnt/archive --mnt /mnt/media
 ```
 
+Print sysfs identity information for the disks that default daemon mode would manage, or for disks under specific mountpoints.
+
+```
+spinherd debug disks-info
+spinherd debug disks-info --mnt /mnt/storage0
+```
+
 Watch runtime filesystem activity that would wake a sleeping herd.
 
 ```
@@ -163,7 +170,7 @@ spinherd debug spindown --device /dev/sda
 spinherd debug spinup --device /dev/sda
 ```
 
-`debug resolve` and `debug daemon` print pretty JSON. `debug fanotify`, `debug spinup`, and `debug spindown` print JSON lines.
+`debug resolve`, `debug daemon`, and `debug disks-info` print pretty JSON. `debug fanotify`, `debug spinup`, and `debug spindown` print JSON lines.
 
 The regular start and stop debug commands already use the `/dev/sg*` transport internally. When you pass `--device /dev/sdf`, `spinherd` resolves it to the matching `/dev/sg*` node before sending the command.
 
@@ -178,6 +185,7 @@ usage:
   spinherd system-install
   spinherd debug daemon [--ignore-mnt /mnt/spinningrust0 ...]
   spinherd debug resolve --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
+  spinherd debug disks-info [--mnt /mnt/spinningrust0 ...]
   spinherd debug fanotify --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug spindown --mnt /mnt/spinningrust0 [--mnt /mnt/spinningrust1 ...]
   spinherd debug spindown --device /dev/sda [--device /dev/sdb ...]

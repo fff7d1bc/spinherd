@@ -21,6 +21,12 @@ func runDebug(ctx context.Context, paths Paths, _ *log.Logger, cfg DebugConfig) 
 			return err
 		}
 		return writeJSON(buildAutoDebugOutput(report))
+	case "disks-info":
+		herds, _, err := planHerds(paths, cfg.Mountpoints, nil, len(cfg.Mountpoints) == 0)
+		if err != nil {
+			return err
+		}
+		return writeJSON(buildDisksInfoDebugOutput(paths, herds))
 	}
 
 	var herds []Herd
@@ -382,6 +388,12 @@ type debugResolveOutput struct {
 	Herds     []debugHerdOutput `json:"herds"`
 }
 
+type debugDisksInfoOutput struct {
+	Action    string     `json:"action"`
+	DiskCount int        `json:"disk_count"`
+	Disks     []DiskInfo `json:"disks"`
+}
+
 type debugExcludedOutput struct {
 	Mountpoint string   `json:"mountpoint"`
 	Source     string   `json:"source"`
@@ -406,6 +418,19 @@ func buildResolveDebugOutput(herds []Herd) debugResolveOutput {
 		Action:    "resolve",
 		HerdCount: len(herds),
 		Herds:     convertHerds(herds, true),
+	}
+}
+
+func buildDisksInfoDebugOutput(paths Paths, herds []Herd) debugDisksInfoOutput {
+	var devices []string
+	for _, herd := range herds {
+		devices = append(devices, herd.Devices...)
+	}
+	devices = uniqueSortedStrings(devices)
+	return debugDisksInfoOutput{
+		Action:    "disks-info",
+		DiskCount: len(devices),
+		Disks:     resolveDiskInfos(paths, devices),
 	}
 }
 
